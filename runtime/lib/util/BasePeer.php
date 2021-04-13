@@ -361,13 +361,14 @@ class BasePeer
         foreach ($tablesColumns as $tableName => $columns) {
 
             $whereClause = array();
-            $updateWhereClause = array();
+            $selectWhereClause = array();
             $params = array();
+            $selectParams = array();
             $stmt = null;
-            $updateStmt = null;
+            $selectStmt = null;
             try {
                 $sql = 'UPDATE ';
-                $updateSql = 'SELECT ID FROM ';
+                $selectSql = 'SELECT ID FROM ';
                 if ($queryComment = $selectCriteria->getComment()) {
                     $sql .= '/* ' . $queryComment . ' */ ';
                 }
@@ -380,10 +381,10 @@ class BasePeer
                 }
                 if ($db->useQuoteIdentifier()) {
                     $sql .= $db->quoteIdentifierTable($updateTable);
-                    $updateSql .= $db->quoteIdentifierTable($updateTable);
+                    $selectSql .= $db->quoteIdentifierTable($updateTable);
                 } else {
                     $sql .= $updateTable;
-                    $updateSql .= $updateTable;
+                    $selectSql .= $updateTable;
                 }
                 $sql .= " SET ";
                 $p = 1;
@@ -425,7 +426,8 @@ class BasePeer
                 }
 
                 $params = self::buildParams($updateTablesColumns[$tableName], $updateValues);
-                $paramsWhere = self::buildParams($selectCriteria->keys(), $selectCriteria);
+                $selectParams = self::buildParams($selectCriteria->keys(), $selectCriteria);
+
                 $sql = substr($sql, 0, -2);
                 if (!empty($columns)) {
                     foreach ($columns as $colName) {
@@ -435,48 +437,47 @@ class BasePeer
                     }
                     $sql .= " WHERE " . implode(" AND ", $whereClause);
                 }
-          
-                $paramCounter = 1;
-                if (self::$useSelectForUpdate) {
-                    if (!empty($columns)) {
-                        foreach ($columns as $colName) {
-                            $updateWhereClause[] = $colName . "=:p". $paramCounter;
-                            $paramCounter++;
-                        }
-                        $updateSql .= " WHERE " . implode(" AND ", $updateWhereClause);
+
+                if (!empty($columns) && self::$useSelectForUpdate) {
+                    $paramCounter = 1;
+                    foreach ($columns as $colName) {
+                        $selectWhereClause[] = $colName . "=:p". $paramCounter;
+                        $paramCounter++;
                     }
-                    $db->cleanupSQL($updateSql, $paramsWhere, $updateValues, $dbMap);
-                    $updateStmt = $con->prepare($updateSql);
+                    $selectSql .= " WHERE " . implode(" AND ", $selectWhereClause);
                 }
+
                 $db->cleanupSQL($sql, $params, $updateValues, $dbMap);
+                $db->cleanupSQL($selectSql, $selectParams, $updateValues, $dbMap);
 
                 $stmt = $con->prepare($sql);
+                $selectStmt = $con->prepare($selectSql);
 
                 // Replace ':p?' with the actual values
                 if (self::$useSelectForUpdate) {
-                    $db->bindValues($updateStmt, $paramsWhere, $dbMap, $db);
+                    $db->bindValues($selectStmt, $selectParams, $dbMap, $db);
                 }
                 $db->bindValues($stmt, $params, $dbMap, $db);
 
                 if (self::$useSelectForUpdate) {
-                    $updateStmt->execute();
+                    $selectStmt->execute();
                 }
                 $stmt->execute();
 
                 $affectedRows = $stmt->rowCount();
 
                 $stmt = null; // close
-                $updateStmt = null; // close
+                $selectStmt = null; // close
 
             } catch (Exception $e) {
                 if ($stmt) {
                     $stmt = null;
                 } // close
-                if ($updateStmt) {
-                    $updateStmt = null;
+                if ($selectStmt) {
+                    $selectStmt = null;
                 } // close
                 Propel::log($e->getMessage(), Propel::LOG_ERR);
-                throw new PropelException(sprintf('Unable to execute UPDATE statement [%s] \nUnable to execute SELECT FOR UPDATE statement [%s] ', $sql, $updateSql), $e);
+                throw new PropelException(sprintf("Unable to execute UPDATE statement [%s] \nUnable to execute SELECT FOR UPDATE statement [%s] ", $sql, $selectSql), $e);
             }
         } // foreach table in the criteria
 
