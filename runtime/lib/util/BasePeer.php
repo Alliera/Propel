@@ -361,6 +361,7 @@ class BasePeer
         foreach ($tablesColumns as $tableName => $columns) {
 
             $whereClause = array();
+            $updateWhereClause = array();
             $params = array();
             $stmt = null;
             $updateStmt = null;
@@ -424,7 +425,7 @@ class BasePeer
                 }
 
                 $params = self::buildParams($updateTablesColumns[$tableName], $updateValues);
-
+                $paramsWhere = self::buildParams($selectCriteria->keys(), $selectCriteria);
                 $sql = substr($sql, 0, -2);
                 if (!empty($columns)) {
                     foreach ($columns as $colName) {
@@ -433,20 +434,27 @@ class BasePeer
                         $whereClause[] = $sb;
                     }
                     $sql .= " WHERE " . implode(" AND ", $whereClause);
-                    $updateSql .= " WHERE " . implode(" AND ", $whereClause);
                 }
-
-                $db->cleanupSQL($sql, $params, $updateValues, $dbMap);
-                $db->cleanupSQL($updateSql, $params, $updateValues, $dbMap);
-
+          
+                $paramCounter = 1;
                 if (self::$useSelectForUpdate) {
+                    if (!empty($columns)) {
+                        foreach ($columns as $colName) {
+                            $updateWhereClause[] = $colName . "=:p". $paramCounter;
+                            $paramCounter++;
+                        }
+                        $updateSql .= " WHERE " . implode(" AND ", $updateWhereClause);
+                    }
+                    $db->cleanupSQL($updateSql, $paramsWhere, $updateValues, $dbMap);
                     $updateStmt = $con->prepare($updateSql);
                 }
+                $db->cleanupSQL($sql, $params, $updateValues, $dbMap);
+
                 $stmt = $con->prepare($sql);
 
                 // Replace ':p?' with the actual values
                 if (self::$useSelectForUpdate) {
-                    $db->bindValues($updateStmt, $params, $dbMap, $db);
+                    $db->bindValues($updateStmt, $paramsWhere, $dbMap, $db);
                 }
                 $db->bindValues($stmt, $params, $dbMap, $db);
 
