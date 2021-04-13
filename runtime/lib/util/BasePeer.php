@@ -440,7 +440,7 @@ class BasePeer
                 $db->cleanupSQL($updateSql, $params, $updateValues, $dbMap);
 
                 if (self::$useSelectForUpdate) {
-                    $updateStmt = $con->prepare($updateSql)
+                    $updateStmt = $con->prepare($updateSql);
                 }
                 $stmt = $con->prepare($sql);
 
