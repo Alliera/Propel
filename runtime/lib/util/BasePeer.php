@@ -29,6 +29,8 @@
  */
 class BasePeer
 {
+    /** Boolean that controls whether to perform a "SELECT FOR UPDATE" */
+    public static $useSelectForUpdate = false;
 
     /** Array (hash) that contains the cached mapBuilders. */
     private static $mapBuilders = array();
@@ -361,8 +363,10 @@ class BasePeer
             $whereClause = array();
             $params = array();
             $stmt = null;
+            $updateStmt = null;
             try {
                 $sql = 'UPDATE ';
+                $updateSql = 'SELECT ID FROM ';
                 if ($queryComment = $selectCriteria->getComment()) {
                     $sql .= '/* ' . $queryComment . ' */ ';
                 }
@@ -375,8 +379,10 @@ class BasePeer
                 }
                 if ($db->useQuoteIdentifier()) {
                     $sql .= $db->quoteIdentifierTable($updateTable);
+                    $updateSql .= $db->quoteIdentifierTable($updateTable);
                 } else {
                     $sql .= $updateTable;
+                    $updateSql .= $updateTable;
                 }
                 $sql .= " SET ";
                 $p = 1;
@@ -427,27 +433,42 @@ class BasePeer
                         $whereClause[] = $sb;
                     }
                     $sql .= " WHERE " . implode(" AND ", $whereClause);
+                    $updateSql .= " WHERE " . implode(" AND ", $whereClause);
                 }
 
                 $db->cleanupSQL($sql, $params, $updateValues, $dbMap);
+                $db->cleanupSQL($updateSql, $params, $updateValues, $dbMap);
 
+                if (self::$useSelectForUpdate) {
+                    $updateStmt = $con->prepare($updateSql)
+                }
                 $stmt = $con->prepare($sql);
 
                 // Replace ':p?' with the actual values
+                if (self::$useSelectForUpdate) {
+                    $db->bindValues($updateStmt, $params, $dbMap, $db);
+                }
                 $db->bindValues($stmt, $params, $dbMap, $db);
 
+                if (self::$useSelectForUpdate) {
+                    $updateStmt->execute();
+                }
                 $stmt->execute();
 
                 $affectedRows = $stmt->rowCount();
 
                 $stmt = null; // close
+                $updateStmt = null; // close
 
             } catch (Exception $e) {
                 if ($stmt) {
                     $stmt = null;
                 } // close
+                if ($updateStmt) {
+                    $updateStmt = null;
+                } // close
                 Propel::log($e->getMessage(), Propel::LOG_ERR);
-                throw new PropelException(sprintf('Unable to execute UPDATE statement [%s]', $sql), $e);
+                throw new PropelException(sprintf('Unable to execute UPDATE statement [%s] \nUnable to execute SELECT FOR UPDATE statement [%s] ', $sql, $updateSql), $e);
             }
         } // foreach table in the criteria
 
