@@ -29,6 +29,8 @@
  */
 class BasePeer
 {
+    /** Boolean that controls whether to perform a "SELECT FOR UPDATE" */
+    public static $useSelectForUpdate = false;
 
     /** Array (hash) that contains the cached mapBuilders. */
     private static $mapBuilders = array();
@@ -358,8 +360,10 @@ class BasePeer
             $whereClause = array();
             $params = array();
             $stmt = null;
+            $updateStmt = null;
             try {
                 $sql = 'UPDATE ';
+                $updateSql = 'SELECT ID FROM ';
                 if ($queryComment = $selectCriteria->getComment()) {
                     $sql .= '/* ' . $queryComment . ' */ ';
                 }
@@ -372,8 +376,10 @@ class BasePeer
                 }
                 if ($db->useQuoteIdentifier()) {
                     $sql .= $db->quoteIdentifierTable($updateTable);
+                    $updateSql .= $db->quoteIdentifierTable($updateTable);
                 } else {
                     $sql .= $updateTable;
+                    $updateSql .= $updateTable;
                 }
                 $sql .= " SET ";
                 $p = 1;
@@ -384,7 +390,7 @@ class BasePeer
                         $updateColumnName = $db->quoteIdentifier($updateColumnName);
                     }
                     if ($updateValues->getComparison($col) != Criteria::CUSTOM_EQUAL) {
-                        $sql .= $updateColumnName . '=:p'.$p++.', ';
+                        $sql .= $updateColumnName . '=:p' . $p++ . ', ';
                     } else {
                         $param = $updateValues->get($col);
                         $sql .= $updateColumnName . ' = ';
@@ -393,16 +399,16 @@ class BasePeer
                                 $raw = $param['raw'];
                                 $rawcvt = '';
                                 // parse the $params['raw'] for ? chars
-                                for ($r=0,$len=strlen($raw); $r < $len; $r++) {
+                                for ($r = 0, $len = strlen($raw); $r < $len; $r++) {
                                     if ($raw{$r} == '?') {
-                                        $rawcvt .= ':p'.$p++;
+                                        $rawcvt .= ':p' . $p++;
                                     } else {
                                         $rawcvt .= $raw{$r};
                                     }
                                 }
                                 $sql .= $rawcvt . ', ';
                             } else {
-                                $sql .= ':p'.$p++.', ';
+                                $sql .= ':p' . $p++ . ', ';
                             }
                             if (isset($param['value'])) {
                                 $updateValues->put($col, $param['value']);
@@ -423,32 +429,49 @@ class BasePeer
                         $selectCriteria->getCriterion($colName)->appendPsTo($sb, $params);
                         $whereClause[] = $sb;
                     }
-                    $sql .= " WHERE " .  implode(" AND ", $whereClause);
+                    $sql .= " WHERE " . implode(" AND ", $whereClause);
+                    $updateSql .= " WHERE " . implode(" AND ", $whereClause);
                 }
 
                 $db->cleanupSQL($sql, $params, $updateValues, $dbMap);
+                $db->cleanupSQL($updateSql, $params, $updateValues, $dbMap);
 
+                if (self::$useSelectForUpdate) {
+                    $updateStmt = $con->prepare($updateSql)
+                }
                 $stmt = $con->prepare($sql);
 
                 // Replace ':p?' with the actual values
+                if (self::$useSelectForUpdate) {
+                    $db->bindValues($updateStmt, $params, $dbMap, $db);
+                }
                 $db->bindValues($stmt, $params, $dbMap, $db);
 
+                if (self::$useSelectForUpdate) {
+                    $updateStmt->execute();
+                }
                 $stmt->execute();
 
                 $affectedRows = $stmt->rowCount();
 
                 $stmt = null; // close
+                $updateStmt = null; // close
 
             } catch (Exception $e) {
-                if ($stmt) $stmt = null; // close
+                if ($stmt) {
+                    $stmt = null;
+                } // close
+                if ($updateStmt) {
+                    $updateStmt = null;
+                } // close
                 Propel::log($e->getMessage(), Propel::LOG_ERR);
-                throw new PropelException(sprintf('Unable to execute UPDATE statement [%s]', $sql), $e);
+                throw new PropelException(sprintf('Unable to execute UPDATE statement [%s] \nUnable to execute SELECT FOR UPDATE statement [%s] ', $sql, $updateSql), $e);
             }
-
         } // foreach table in the criteria
 
         return $affectedRows;
     }
+
 
     /**
      * Executes query build by createSelectSql() and returns the resultset statement.
